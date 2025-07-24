@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'dart:math';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -27,7 +28,7 @@ class NotificationService {
       priority: Priority.high,
     );
     const notificationDetails = NotificationDetails(android: androidDetails);
-    await _notifications.show(0, title, body, notificationDetails);
+    await _notifications.show(Random().nextInt(100000), title, body, notificationDetails);
   }
 }
 
@@ -65,40 +66,91 @@ class _CycleTrackerState extends State<CycleTracker> {
   String _pregnancyRisk = '';
   int _currentDay = 0;
   int _currentWeek = 0;
+  int _daysUntilOvulation = 0;
+  DateTime? _nextPeriodDate;
 
-  final Map<int, String> _phaseMap = {
-    1: 'Menstrual',
-    2: 'Follicular',
-    3: 'Ovulation',
-    4: 'Luteal',
-  };
-
-  final Map<String, String> _adviceMap = {
-    'Menstrual': 'Encourage rest and comfort. Be extra caring.',
-    'Follicular': 'Support her energy! Plan activities or goals together.',
-    'Ovulation': "Remind her she's gorgeous. Plan a spicy date!",
-    'Luteal': 'Be patient and understanding. Lower pressure, more support.',
+  final Map<String, List<String>> _adviceMap = {
+    'Menstrual': [
+      'Encourage rest and comfort.',
+      'Keep the snacks coming and the heating pad warm.',
+      'Extra cuddles go a long way this week.',
+      'Be extra kind — it’s red alert in more ways than one.',
+    ],
+    'Follicular': [
+      'Support her energy boost — plan something fun!',
+      'Time to do things together — she’s back!',
+      'Help her ride the productivity wave.',
+      'The springtime of the cycle. Bring flowers?',
+    ],
+    'Ovulation': [
+      '🚨 Baby-shaped consequences possible!',
+      'Peak charm, peak fertility. Be wise.',
+      'She’s glowing — don’t mess this up.',
+      'Flirt like it’s the first date again.',
+    ],
+    'Luteal': [
+      'Be patient — moods incoming.',
+      'Time to be her rock, not a pebble.',
+      'Avoid unnecessary debates. Seriously.',
+      'Give space. Bring snacks.',
+    ],
+    'Pre-Menstrual': [
+      'Storm’s a-brewin’. Stock up on empathy.',
+      'Approach gently. Like a deer in the woods.',
+      'It’s not you. It’s hormones.',
+      'Chocolate may solve most issues right now.',
+    ],
+    'Post-Ovulation': [
+      'Fertility window closing. You survived.',
+      'Hormones recalibrating. Proceed carefully.',
+      'Ride the slow wave down. Be chill.',
+      'She’s easing down. Meet her there.',
+    ],
   };
 
   final Map<String, String> _riskMap = {
-    'Menstrual': '🟢 Very Low – Just snacks and snuggles.',
-    'Follicular': '🟡 Medium – Might be safe... might not be.',
-    'Ovulation': '🔴 VERY High – 🚼 Baby-shaped consequences possible!',
-    'Luteal': '🟡 Low – Still time to name the goldfish instead.',
+    'Menstrual': 'Very Low – Just snacks and snuggles.',
+    'Follicular': 'Medium – Might be safe... might not be.',
+    'Ovulation': 'VERY High – 🚼 Baby-shaped consequences possible!',
+    'Luteal': 'Low – Still time to name the goldfish instead.',
+    'Pre-Menstrual': 'Very Low – The floodgates approach.',
+    'Post-Ovulation': 'Medium – Sliding out of danger zone.',
   };
 
   Color _getBackgroundColor(String phase) {
     switch (phase) {
       case 'Menstrual':
-        return Colors.red.shade200;
+        return Colors.red.shade300;
       case 'Follicular':
-        return Colors.teal.shade200;
+        return Colors.blueGrey.shade300;
       case 'Ovulation':
-        return Colors.indigo.shade300;
+        return Colors.orange.shade400;
       case 'Luteal':
+        return Colors.brown.shade300;
+      case 'Pre-Menstrual':
+        return Colors.red.shade100;
+      case 'Post-Ovulation':
         return Colors.amber.shade200;
       default:
         return Colors.blueGrey.shade100;
+    }
+  }
+
+  String _determinePhase(int day, int cycleLength) {
+    if (day <= 5) return 'Menstrual';
+    if (day <= 12) return 'Follicular';
+    if (day <= 17) return 'Ovulation';
+    if (day <= cycleLength - 3) return 'Luteal';
+    if (day <= cycleLength - 1) return 'Pre-Menstrual';
+    return 'Menstrual';
+  }
+
+  void _scheduleReminders(int cycleLength) {
+    for (int i = 0; i < cycleLength; i++) {
+      final reminderDate = _lastPeriodDate.add(Duration(days: i - 1));
+      final phase = _determinePhase(i + 1, cycleLength);
+      final phrase = _adviceMap[phase]?[Random().nextInt(4)] ?? 'Be thoughtful.';
+      NotificationService().showNotification('Reminder: $phase phase tomorrow', phrase);
     }
   }
 
@@ -108,20 +160,26 @@ class _CycleTrackerState extends State<CycleTracker> {
     final daysSincePeriod = today.difference(_lastPeriodDate).inDays % cycleLength;
     final week = (daysSincePeriod ~/ 7) + 1;
 
+    final phase = _determinePhase(daysSincePeriod + 1, cycleLength);
+    final ovulationStart = 13;
+    final ovulationEnd = 17;
+    final daysUntilOvulation = (daysSincePeriod < ovulationStart)
+        ? (ovulationStart - daysSincePeriod)
+        : (cycleLength - daysSincePeriod + ovulationStart);
+
+    final nextPeriod = _lastPeriodDate.add(Duration(days: cycleLength));
+
     setState(() {
       _currentDay = daysSincePeriod + 1;
       _currentWeek = week;
-      _phase = _phaseMap[week] ?? 'Unknown';
-      _advice = _adviceMap[_phase] ?? '';
-      _pregnancyRisk = _riskMap[_phase] ?? '';
+      _phase = phase;
+      _advice = _adviceMap[phase]?[Random().nextInt(4)] ?? '';
+      _pregnancyRisk = _riskMap[phase] ?? '';
+      _daysUntilOvulation = daysUntilOvulation;
+      _nextPeriodDate = nextPeriod;
     });
-  }
 
-  void _sendReminder() {
-    NotificationService().showNotification(
-      'Cycle Reminder: $_phase',
-      _advice,
-    );
+    _scheduleReminders(cycleLength);
   }
 
   @override
@@ -184,11 +242,12 @@ class _CycleTrackerState extends State<CycleTracker> {
             const SizedBox(height: 12),
             Text("Pregnancy Risk: $_pregnancyRisk",
                 style: const TextStyle(fontStyle: FontStyle.italic)),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: _sendReminder,
-              child: const Text("Send Today's Reminder"),
-            ),
+            const SizedBox(height: 12),
+            Text("Days until Ovulation: $_daysUntilOvulation",
+                style: const TextStyle(fontSize: 16)),
+            if (_nextPeriodDate != null)
+              Text("Next Period: ${DateFormat.yMMMd().format(_nextPeriodDate!)}",
+                  style: const TextStyle(fontSize: 16)),
           ],
         ),
       ),
