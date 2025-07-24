@@ -41,10 +41,6 @@ class CycleSyncApp extends StatelessWidget {
       title: 'CycleSync',
       theme: ThemeData(
         primarySwatch: Colors.blueGrey,
-        textTheme: const TextTheme(
-          titleLarge: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-          bodyLarge: TextStyle(fontSize: 16),
-        ),
       ),
       home: const CycleTracker(),
     );
@@ -65,9 +61,9 @@ class _CycleTrackerState extends State<CycleTracker> {
   String _advice = '';
   String _pregnancyRisk = '';
   int _currentDay = 0;
-  int _currentWeek = 0;
-  int _daysUntilOvulation = 0;
   DateTime? _nextPeriodDate;
+  String _ovulationWindow = '';
+  String _progressBar = '';
 
   final Map<String, List<String>> _adviceMap = {
     'Menstrual': [
@@ -83,7 +79,7 @@ class _CycleTrackerState extends State<CycleTracker> {
       'The springtime of the cycle. Bring flowers?',
     ],
     'Ovulation': [
-      '🚨 Baby-shaped consequences possible!',
+      'Baby-shaped consequences possible!',
       'Peak charm, peak fertility. Be wise.',
       'She’s glowing — don’t mess this up.',
       'Flirt like it’s the first date again.',
@@ -111,7 +107,7 @@ class _CycleTrackerState extends State<CycleTracker> {
   final Map<String, String> _riskMap = {
     'Menstrual': 'Very Low – Just snacks and snuggles.',
     'Follicular': 'Medium – Might be safe... might not be.',
-    'Ovulation': 'VERY High – 🚼 Baby-shaped consequences possible!',
+    'Ovulation': 'VERY High – Baby-shaped consequences possible!',
     'Luteal': 'Low – Still time to name the goldfish instead.',
     'Pre-Menstrual': 'Very Low – The floodgates approach.',
     'Post-Ovulation': 'Medium – Sliding out of danger zone.',
@@ -147,7 +143,6 @@ class _CycleTrackerState extends State<CycleTracker> {
 
   void _scheduleReminders(int cycleLength) {
     for (int i = 0; i < cycleLength; i++) {
-      final reminderDate = _lastPeriodDate.add(Duration(days: i - 1));
       final phase = _determinePhase(i + 1, cycleLength);
       final phrase = _adviceMap[phase]?[Random().nextInt(4)] ?? 'Be thoughtful.';
       NotificationService().showNotification('Reminder: $phase phase tomorrow', phrase);
@@ -158,25 +153,28 @@ class _CycleTrackerState extends State<CycleTracker> {
     final cycleLength = int.tryParse(_cycleLengthController.text) ?? 28;
     final today = DateTime.now();
     final daysSincePeriod = today.difference(_lastPeriodDate).inDays % cycleLength;
-    final week = (daysSincePeriod ~/ 7) + 1;
-
     final phase = _determinePhase(daysSincePeriod + 1, cycleLength);
-    final ovulationStart = 13;
-    final ovulationEnd = 17;
-    final daysUntilOvulation = (daysSincePeriod < ovulationStart)
-        ? (ovulationStart - daysSincePeriod)
-        : (cycleLength - daysSincePeriod + ovulationStart);
-
+    final ovulationPeak = 14;
+    final ovulationWindowStart = _lastPeriodDate.add(Duration(days: ovulationPeak - 2));
+    final ovulationWindowEnd = _lastPeriodDate.add(Duration(days: ovulationPeak + 2));
+    final ovulationPeakDate = _lastPeriodDate.add(Duration(days: ovulationPeak));
     final nextPeriod = _lastPeriodDate.add(Duration(days: cycleLength));
+
+    final filledLength = min(daysSincePeriod + 1, cycleLength);
+    final barLength = min(cycleLength, 28);
+    final filled = '▓' * min(filledLength, barLength);
+    final unfilled = '░' * (barLength - min(filledLength, barLength));
+    final bar = '$filled$unfilled';
 
     setState(() {
       _currentDay = daysSincePeriod + 1;
-      _currentWeek = week;
       _phase = phase;
       _advice = _adviceMap[phase]?[Random().nextInt(4)] ?? '';
       _pregnancyRisk = _riskMap[phase] ?? '';
-      _daysUntilOvulation = daysUntilOvulation;
       _nextPeriodDate = nextPeriod;
+      _ovulationWindow =
+          'Ovulation Window: ${DateFormat.MMMd().format(ovulationWindowStart)} – ${DateFormat.MMMd().format(ovulationWindowEnd)} (peak: ${DateFormat.MMMd().format(ovulationPeakDate)})';
+      _progressBar = bar;
     });
 
     _scheduleReminders(cycleLength);
@@ -187,14 +185,14 @@ class _CycleTrackerState extends State<CycleTracker> {
     return Scaffold(
       backgroundColor: _getBackgroundColor(_phase),
       appBar: AppBar(title: const Text('CycleSync')),
-      body: Padding(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             const Text(
               "Track Your Partner's Cycle",
               style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+              textAlign: TextAlign.center,
             ),
             const SizedBox(height: 20),
             Row(
@@ -232,28 +230,71 @@ class _CycleTrackerState extends State<CycleTracker> {
               child: const Text('Predict Phase'),
             ),
             const SizedBox(height: 24),
-            Text("Current Phase: $_phase",
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-            const SizedBox(height: 8),
-            Text("Day: $_currentDay",
-                style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 16)),
-            const SizedBox(height: 8),
-            Text(_advice, textAlign: TextAlign.center),
-            const SizedBox(height: 12),
-            Text("Pregnancy Risk: $_pregnancyRisk",
-                style: const TextStyle(fontStyle: FontStyle.italic)),
-            const SizedBox(height: 12),
-            Text("Days until Ovulation: $_daysUntilOvulation",
-                style: const TextStyle(fontSize: 16)),
-            if (_nextPeriodDate != null)
-              Text("Next Period: ${DateFormat.yMMMd().format(_nextPeriodDate!)}",
-                  style: const TextStyle(fontSize: 16)),
+
+            // Current Phase Card
+            Container(
+              padding: const EdgeInsets.all(16),
+              margin: const EdgeInsets.only(bottom: 20),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                children: [
+                  Text("Current Phase: $_phase",
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      textAlign: TextAlign.center),
+                  const SizedBox(height: 10),
+                  Text(_advice, textAlign: TextAlign.center),
+                  const SizedBox(height: 10),
+                  Text("Pregnancy Risk: $_pregnancyRisk",
+                      style: const TextStyle(fontStyle: FontStyle.italic),
+                      textAlign: TextAlign.center),
+                ],
+              ),
+            ),
+
+            // Prediction + Progress
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                children: [
+                  Text(_ovulationWindow,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 16)),
+                  const SizedBox(height: 8),
+                  if (_nextPeriodDate != null)
+                    Text("Next Period: ${DateFormat.yMMMd().format(_nextPeriodDate!)}",
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(fontSize: 16)),
+                  const SizedBox(height: 16),
+                  Text(_progressBar,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontFamily: 'Courier',
+                        fontSize: 16,
+                      )),
+                  const SizedBox(height: 4),
+                  Text("(Day $_currentDay of ${_cycleLengthController.text})",
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 13)),
+                ],
+              ),
+            ),
           ],
         ),
       ),
     );
   }
 }
+
+
+
+
 
 
 
