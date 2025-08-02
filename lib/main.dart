@@ -1,12 +1,15 @@
 
-
+import 'package:timezone/data/latest.dart' as tz;
+import 'package:timezone/timezone.dart' as tz;
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'dart:math';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  tz.initializeTimeZones(); // Required for timezone support
   await NotificationService().init();
   runApp(const CycleSyncApp());
 }
@@ -20,15 +23,25 @@ class NotificationService {
     await _notifications.initialize(initializationSettings);
   }
 
-  Future<void> showNotification(String title, String body) async {
+  Future<void> scheduleDailyReminder(String title, String body, DateTime dateTime) async {
     const androidDetails = AndroidNotificationDetails(
       'cycle_channel',
       'Cycle Reminders',
       importance: Importance.max,
       priority: Priority.high,
     );
-    const notificationDetails = NotificationDetails(android: androidDetails);
-    await _notifications.show(Random().nextInt(100000), title, body, notificationDetails);
+    final notificationDetails = NotificationDetails(android: androidDetails);
+
+    await _notifications.zonedSchedule(
+      Random().nextInt(100000),
+      title,
+      body,
+      tz.TZDateTime.from(dateTime, tz.local),
+      notificationDetails,
+      androidAllowWhileIdle: true,
+      uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+      matchDateTimeComponents: DateTimeComponents.time,
+    );
   }
 }
 
@@ -57,6 +70,7 @@ class CycleTracker extends StatefulWidget {
 class _CycleTrackerState extends State<CycleTracker> {
   DateTime _lastPeriodDate = DateTime.now().subtract(const Duration(days: 10));
   final TextEditingController _cycleLengthController = TextEditingController(text: '28');
+  final TextEditingController _reminderTimeController = TextEditingController();
   String _phase = '';
   String _advice = '';
   String _pregnancyRisk = '';
@@ -64,6 +78,27 @@ class _CycleTrackerState extends State<CycleTracker> {
   DateTime? _nextPeriodDate;
   String _ovulationWindow = '';
   String _progressBar = '';
+  bool _redAlert = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPrefs();
+  }
+
+  Future<void> _loadPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    _reminderTimeController.text = prefs.getString('reminderTime') ?? '08:00';
+    setState(() {
+      _redAlert = prefs.getBool('redAlert') ?? false;
+    });
+  }
+
+  Future<void> _savePrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('reminderTime', _reminderTimeController.text);
+    await prefs.setBool('redAlert', _redAlert);
+  }
 
   final Map<String, List<String>> _adviceMap = {
     'Menstrual': [
@@ -141,11 +176,20 @@ class _CycleTrackerState extends State<CycleTracker> {
     return 'Menstrual';
   }
 
-  void _scheduleReminders(int cycleLength) {
+  void _scheduleReminders(int cycleLength) async {
+    final reminderTime = _reminderTimeController.text;
+    final parts = reminderTime.split(':');
+    if (parts.length != 2) return;
+
+    final hour = int.tryParse(parts[0]) ?? 8;
+    final minute = int.tryParse(parts[1]) ?? 0;
+
     for (int i = 0; i < cycleLength; i++) {
+      final date = _lastPeriodDate.add(Duration(days: i));
       final phase = _determinePhase(i + 1, cycleLength);
       final phrase = _adviceMap[phase]?[Random().nextInt(4)] ?? 'Be thoughtful.';
-      NotificationService().showNotification('Reminder: $phase phase tomorrow', phrase);
+      final DateTime notificationTime = DateTime(date.year, date.month, date.day, hour, minute);
+      await NotificationService().scheduleDailyReminder('Reminder: $phase phase', phrase, notificationTime);
     }
   }
 
@@ -178,22 +222,59 @@ class _CycleTrackerState extends State<CycleTracker> {
     });
 
     _scheduleReminders(cycleLength);
+    _savePrefs();
+  }
+
+  void _openSettingsDialog() {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Settings'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _reminderTimeController,
+              keyboardType: TextInputType.datetime,
+              decoration: const InputDecoration(labelText: 'Reminder Time (HH:mm)'),
+            ),
+            SwitchListTile(
+              title: const Text("Red Alert Mode"),
+              value: _redAlert,
+              onChanged: (val) {
+                setState(() => _redAlert = val);
+                _savePrefs();
+              },
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Close"))
+        ],
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _getBackgroundColor(_phase),
-      appBar: AppBar(title: const Text('CycleSync')),
+      appBar: AppBar(
+        title: const Text('CycleSync'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings),
+            onPressed: _openSettingsDialog,
+          )
+        ],
+      ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
-            const Text(
-              "Track Your Partner's Cycle",
-              style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-              textAlign: TextAlign.center,
-            ),
+            const Text("Track Your Partner's Cycle",
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                textAlign: TextAlign.center),
             const SizedBox(height: 20),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -225,13 +306,8 @@ class _CycleTrackerState extends State<CycleTracker> {
               ),
             ),
             const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: _predictPhase,
-              child: const Text('Predict Phase'),
-            ),
+            ElevatedButton(onPressed: _predictPhase, child: const Text('Predict Phase')),
             const SizedBox(height: 24),
-
-            // Current Phase Card
             Container(
               padding: const EdgeInsets.all(16),
               margin: const EdgeInsets.only(bottom: 20),
@@ -253,8 +329,6 @@ class _CycleTrackerState extends State<CycleTracker> {
                 ],
               ),
             ),
-
-            // Prediction + Progress
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
@@ -274,10 +348,7 @@ class _CycleTrackerState extends State<CycleTracker> {
                   const SizedBox(height: 16),
                   Text(_progressBar,
                       textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontFamily: 'Courier',
-                        fontSize: 16,
-                      )),
+                      style: const TextStyle(fontFamily: 'Courier', fontSize: 16)),
                   const SizedBox(height: 4),
                   Text("(Day $_currentDay of ${_cycleLengthController.text})",
                       textAlign: TextAlign.center,
@@ -291,10 +362,6 @@ class _CycleTrackerState extends State<CycleTracker> {
     );
   }
 }
-
-
-
-
 
 
 
